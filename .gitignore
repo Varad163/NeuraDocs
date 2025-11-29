@@ -1,0 +1,28 @@
+# --- Backend ---
+backend/venv/
+backend/.env
+backend/__pycache__/
+backend/*.log
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/.env
+frontend/.next/
+frontend/dist/
+
+# --- OS Files ---
+.DS_Store
+
+# --- IDE Folders ---
+.vscode/
+.idea/
+
+# --- Python cache ---
+__pycache__/
+*.pyc
+
+# --- Log files ---
+*.log
+git rm -r --cached .
+git add .
+git commit -m "Clean repo after removing nested git"
