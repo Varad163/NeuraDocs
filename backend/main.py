@@ -1,19 +1,48 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, UploadFile, File
 from backend.services.chunker import chunk_text
 from backend.services.pdf_reader import extract_text_from_pdf
+from backend.services.pinecone_rag import store_chunks, query_chunks
+from openai import OpenAI
+import os
+from dotenv import load_dotenv
 
-app = FastAPI(title="NeuraDocs API")
+load_dotenv()
 
-@app.get("/")
-def read_root():
-    return {"status": "ok"}
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+app = FastAPI()
 
 @app.post("/extract")
-def extract_endpoint(path: str):
-    try:
-        text = extract_text_from_pdf(path)
-        chunks = chunk_text(text)
-        return JSONResponse({"chunks": len(chunks)})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+async def extract_endpoint(file: UploadFile = File(...)):
+    contents = await file.read()
+    with open("temp.pdf", "wb") as f:
+        f.write(contents)
+
+    text = extract_text_from_pdf("temp.pdf")
+    chunks = chunk_text(text)
+
+    store_chunks(chunks)
+
+    return {"chunks": chunks}
+
+
+@app.post("/chat")
+async def chat(query: str):
+    relevant_chunks = query_chunks(query)
+    context = "\n\n".join(relevant_chunks)
+
+    prompt = f"""
+Use ONLY the context below to answer the question.
+
+Context:
+{context}
+
+Question: {query}
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    return {"answer": response.choices[0].message["content"]}
