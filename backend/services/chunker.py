@@ -1,11 +1,16 @@
-from typing import List
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+def chunk_text(text, chunk_size=800):
+    words = text.split()
+    chunks = []
+    current = []
 
+    for word in words:
+        if len(" ".join(current + [word])) > chunk_size:
+            chunks.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
 
+    if current:
+        chunks.append(" ".join(current))
 
-def chunk_text(text: str) -> List[str]:
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50
-    )
-    return splitter.split_text(text)
+    return chunks

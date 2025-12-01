@@ -1,9 +1,13 @@
 import { useState } from "react";
 
-function App() {
+export default function App() {
   const [file, setFile] = useState<File | null>(null);
-  const [chunks, setChunks] = useState<string[]>([]);
+  const [chunks, setChunks] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
 
   const uploadPDF = async () => {
     if (!file) return alert("Please select a PDF");
@@ -20,85 +24,112 @@ function App() {
       });
 
       const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
       setChunks(data.chunks || []);
-    } catch (error) {
-      console.error(error);
+      alert("PDF uploaded & saved to Pinecone!");
+    } catch (err) {
       alert("Error extracting PDF");
     }
 
     setLoading(false);
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 flex flex-col items-center">
+  const askQuestion = async () => {
+    if (!question.trim()) return;
 
-      {/* HEADER */}
-      <header className="w-full bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-300 py-4 px-10 flex items-center">
-        <h1 className="text-4xl font-bold text-gray-900 tracking-tight">📄 NeuraDocs</h1>
+    setChatLoading(true);
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: question }),
+      });
+
+      const data = await res.json();
+      setAnswer(data.answer || "No answer returned.");
+    } catch (err) {
+      alert("Error asking question");
+    }
+
+    setChatLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <header className="w-full bg-white shadow px-10 py-5">
+        <h1 className="text-3xl font-bold">📘 NeuraDocs</h1>
       </header>
 
-      {/* MAIN FULL-WIDTH AREA */}
-      <div className="w-full max-w-[1800px] flex flex-row gap-10 p-10">
+      <div className="grid grid-cols-3 gap-6 p-8">
+        {/* UPLOAD PANEL */}
+        <div className="bg-white p-6 rounded-xl shadow-md col-span-1">
+          <h2 className="text-xl font-semibold mb-4">Upload PDF</h2>
 
-        {/* LEFT PANEL (BIG AND BEAUTIFUL) */}
-        <div className="w-[400px] bg-white rounded-3xl shadow-2xl p-8 border border-gray-200">
-          <h2 className="text-2xl font-semibold mb-6">Upload Your PDF</h2>
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
 
-          <div className="flex flex-col gap-4">
-            <label className="w-full">
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="block w-full text-sm text-gray-800 file:mr-4 file:py-2 file:px-4 
-                file:rounded-lg file:border-0 file:text-sm file:font-semibold
-                file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer"
-              />
-            </label>
+          {file && <p className="mt-2">📌 {file.name}</p>}
 
-            {file && (
-              <p className="text-gray-700 font-medium mt-2">
-                📌 <span className="font-semibold">{file.name}</span>
-              </p>
-            )}
+          <button
+            onClick={uploadPDF}
+            disabled={loading}
+            className="w-full mt-4 bg-blue-600 text-white py-2 rounded-lg"
+          >
+            {loading ? "Extracting..." : "Extract PDF"}
+          </button>
 
-            <button
-              onClick={uploadPDF}
-              className="w-full mt-4 bg-blue-600 text-white py-3 rounded-xl font-semibold text-lg 
-              hover:bg-blue-700 active:scale-95 transition transform shadow-md"
-            >
-              {loading ? "Extracting..." : "Extract PDF"}
-            </button>
-          </div>
+          <hr className="my-6" />
+
+          <h2 className="text-xl font-semibold mb-3">Ask PDF</h2>
+
+          <textarea
+            rows={3}
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Ask anything..."
+            className="w-full p-3 border rounded-lg"
+          />
+
+          <button
+            onClick={askQuestion}
+            disabled={chatLoading}
+            className="w-full mt-4 bg-green-600 text-white py-2 rounded-lg"
+          >
+            {chatLoading ? "Thinking..." : "Ask AI"}
+          </button>
         </div>
 
-        {/* RIGHT PANEL — FULL WIDTH */}
-        <div className="flex-1 bg-white rounded-3xl shadow-xl p-8 border border-gray-200 overflow-y-auto h-[80vh]">
-          <h2 className="text-3xl font-semibold mb-6 text-gray-900">
-            Extracted Chunks {chunks.length > 0 && `(${chunks.length})`}
-          </h2>
+        {/* RIGHT SIDE */}
+        <div className="col-span-2 space-y-6">
+          {/* CHUNKS */}
+          <div className="bg-white p-6 rounded-xl shadow-md max-h-[350px] overflow-y-auto">
+            <h2 className="text-2xl font-bold">Extracted Chunks ({chunks.length})</h2>
 
-          {chunks.length === 0 && (
-            <p className="text-gray-600 text-lg">Upload a PDF to view extracted text chunks.</p>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {chunks.map((chunk, index) => (
-              <div
-                key={index}
-                className="bg-gray-50 p-6 rounded-2xl shadow-md border border-gray-200 hover:shadow-xl transition"
-              >
-                <p className="text-gray-800 leading-relaxed whitespace-pre-wrap text-lg">
-                  {chunk}
-                </p>
+            {chunks.map((chunk, i) => (
+              <div key={i} className="p-3 mt-3 border rounded bg-gray-50">
+                {chunk}
               </div>
             ))}
+
+            {!chunks.length && <p>No chunks yet.</p>}
+          </div>
+
+          {/* ANSWER */}
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <h2 className="text-2xl font-bold">AI Answer</h2>
+            {answer ? (
+              <p className="mt-3">{answer}</p>
+            ) : (
+              <p className="text-gray-500">Ask a question to get an answer.</p>
+            )}
           </div>
         </div>
-
       </div>
     </div>
   );
 }
-
-export default App;

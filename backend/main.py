@@ -1,64 +1,88 @@
 from fastapi import FastAPI, UploadFile, File
-from services.chunker import chunk_text
+from fastapi.middleware.cors import CORSMiddleware
 from services.chunker import chunk_text
 from services.pdf_reader import extract_text_from_pdf
-
-from openai import OpenAI
-from fastapi.middleware.cors import CORSMiddleware
-
-import os
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from pinecone import Pinecone
 from dotenv import load_dotenv
+import os
+from openai import OpenAI
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 app = FastAPI()
 
-
-
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],            # allow all for development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Keys
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+PINECONE_KEY = os.getenv("PINECONE_API_KEY")
+INDEX_NAME = os.getenv("PINECONE_INDEX")
+
+client = OpenAI(api_key=OPENAI_KEY)
+
+pc = Pinecone(api_key=PINECONE_KEY)
+index = pc.Index(INDEX_NAME)
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
 @app.post("/extract")
 async def extract_endpoint(file: UploadFile = File(...)):
     try:
-        # read pdf bytes
         pdf_bytes = await file.read()
 
-        # extract text
+        # Extract text
         text = extract_text_from_pdf(pdf_bytes)
 
-        # split into chunks (we fix this too)
+        # Make chunks
         chunks = chunk_text(text)
 
-        return {"chunks": chunks}
+        # Upload to Pinecone
+        vectors = []
+        for i, chunk in enumerate(chunks):
+            emb = embeddings.embed_query(chunk)
+            vectors.append({
+                "id": f"{file.filename}-{i}",
+                "values": emb,
+                "metadata": {"text": chunk}
+            })
+
+        index.upsert(vectors)
+
+        return {"chunks": chunks, "message": "Uploaded to Pinecone!"}
+
     except Exception as e:
         print("ERROR:", e)
         return {"error": str(e)}
 
 
-@app.post("/chat")
-async def chat(query: str):
-    relevant_chunks = query_chunks(query)
-    context = "\n\n".join(relevant_chunks)
+@app.post("/ask")
+async def ask_question(query: str):
+    try:
+        q_emb = embeddings.embed_query(query)
 
-    prompt = f"""
-Use ONLY the context below to answer the question.
+        result = index.query(
+            vector=q_emb,
+            top_k=5,
+            include_metadata=True
+        )
 
-Context:
-{context}
+        docs = " ".join([m["metadata"]["text"] for m in result["matches"]])
 
-Question: {query}
-"""
+        response = llm.predict(
+            f"Use the following PDF context:\n{docs}\n\nQuestion: {query}"
+        )
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
+        return {"answer": response}
 
-    return {"answer": response.choices[0].message["content"]}
+    except Exception as e:
+        return {"error": str(e)}
