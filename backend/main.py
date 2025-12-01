@@ -44,7 +44,6 @@ app.add_middleware(
 )
 
 
-# Model for Ask endpoint
 class AskBody(BaseModel):
     query: str
 
