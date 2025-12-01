@@ -1,64 +1,122 @@
 from fastapi import FastAPI, UploadFile, File
-from services.chunker import chunk_text
-from services.chunker import chunk_text
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from dotenv import load_dotenv
+import os
+import logging
+
 from services.pdf_reader import extract_text_from_pdf
+from services.chunker import chunk_text
 
 from openai import OpenAI
-from fastapi.middleware.cors import CORSMiddleware
 
-import os
-from dotenv import load_dotenv
-
+# Load environment
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+PINECONE_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX")
 
+client = OpenAI(api_key=OPENAI_KEY)
+
+# Try Pinecone
+pinecone_ok = False
+try:
+    from pinecone import Pinecone
+    pc = Pinecone(api_key=PINECONE_KEY)
+    index = pc.Index(PINECONE_INDEX)
+    pinecone_ok = True
+    logging.info("Pinecone initialized.")
+except Exception as e:
+    logging.warning(f"Pinecone disabled: {e}")
+    index = None
+
+# FastAPI app
 app = FastAPI()
-
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],            # allow all for development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Model for Ask endpoint
+class AskBody(BaseModel):
+    query: str
+
+
 @app.post("/extract")
 async def extract_endpoint(file: UploadFile = File(...)):
     try:
-        # read pdf bytes
         pdf_bytes = await file.read()
-
-        # extract text
         text = extract_text_from_pdf(pdf_bytes)
-
-        # split into chunks (we fix this too)
         chunks = chunk_text(text)
 
+        # Embed & insert into Pinecone
+        if pinecone_ok:
+            vectors = []
+            for i, chunk in enumerate(chunks):
+                emb = client.embeddings.create(
+                    model="text-embedding-3-small",
+                    input=chunk
+                ).data[0].embedding
+
+                vectors.append({
+                    "id": f"{file.filename}_{i}",
+                    "values": emb,
+                    "metadata": {"text": chunk}
+                })
+
+            index.upsert(vectors)
+
         return {"chunks": chunks}
+
     except Exception as e:
-        print("ERROR:", e)
+        logging.exception("Error in /extract")
         return {"error": str(e)}
 
 
-@app.post("/chat")
-async def chat(query: str):
-    relevant_chunks = query_chunks(query)
-    context = "\n\n".join(relevant_chunks)
+@app.post("/ask")
+async def ask_question(body: AskBody):
+    try:
+        q = body.query
 
-    prompt = f"""
-Use ONLY the context below to answer the question.
+        # Query embedding
+        q_emb = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=q
+        ).data[0].embedding
 
-Context:
-{context}
+        # Query Pinecone
+        matches = []
+        if pinecone_ok:
+            result = index.query(
+                vector=q_emb,
+                top_k=5,
+                include_metadata=True
+            )
+            matches = result["matches"]
 
-Question: {query}
-"""
+        # Build context
+        context = " ".join([m["metadata"]["text"] for m in matches])
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
+        # Chat completion
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an AI assistant for PDF Q&A."},
+                {"role": "user", "content": f"Context: {context}\n\nQuestion: {q}"}
+            ]
+        )
 
-    return {"answer": response.choices[0].message["content"]}
+        answer = response.choices[0].message["content"]
+
+        return {"answer": answer}
+
+    except Exception as e:
+        logging.exception("Error in /ask")
+        return {"error": str(e)}
