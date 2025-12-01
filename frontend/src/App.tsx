@@ -9,7 +9,6 @@ function App() {
   const [answer, setAnswer] = useState("");
   const [asking, setAsking] = useState(false);
 
-  // Upload PDF → Extract chunks
   const uploadPDF = async () => {
     if (!file) return alert("Please select a PDF");
 
@@ -42,7 +41,6 @@ function App() {
     setLoading(false);
   };
 
-  // Ask AI → Query your RAG backend
   const askAI = async () => {
     if (!question.trim()) return alert("Please type a question");
 
@@ -73,20 +71,18 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 flex flex-col items-center">
-      {/* TOP HEADER */}
+ 
       <header className="w-full bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-300 py-4 px-10 flex items-center">
         <h1 className="text-4xl font-bold text-gray-900 tracking-tight">
           📄 NeuraDocs
         </h1>
       </header>
 
-      {/* MAIN 2-COLUMN LAYOUT */}
       <div className="w-full max-w-[1800px] flex flex-row gap-10 p-10">
-        {/* LEFT PANEL */}
+
         <div className="w-[400px] bg-white rounded-3xl shadow-2xl p-8 border border-gray-200">
           <h2 className="text-2xl font-semibold mb-6">Upload Your PDF</h2>
 
-          {/* Upload Area */}
           <div className="flex flex-col gap-4">
             <label>
               <input
@@ -114,7 +110,6 @@ function App() {
             </button>
           </div>
 
-          {/* ASK AI SECTION */}
           <div className="mt-10 pt-8 border-t border-gray-300">
             <h2 className="text-2xl font-semibold mb-4">Ask AI</h2>
 
@@ -144,7 +139,6 @@ function App() {
           </div>
         </div>
 
-        {/* RIGHT PANEL — CHUNKS */}
         <div className="flex-1 bg-white rounded-3xl shadow-xl p-8 border border-gray-200 overflow-y-auto h-[85vh]">
           <h2 className="text-3xl font-semibold mb-6 text-gray-900">
             Extracted Chunks {chunks.length > 0 && `(${chunks.length})`}

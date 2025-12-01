@@ -22,7 +22,6 @@ if not GROQ_API_KEY:
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Where we store extracted PDF chunks
 DATA_FILE = os.path.join(os.path.dirname(__file__), "data/chunks.json")
 os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
 
@@ -74,7 +73,6 @@ async def ask_question(body: AskBody):
         if not chunks:
             return {"answer": "No PDF extracted yet. Please upload a PDF first."}
 
-        # Simple scoring to find best matching chunks
         q_words = [w.lower() for w in q.split() if len(w) > 2]
 
         scored = []

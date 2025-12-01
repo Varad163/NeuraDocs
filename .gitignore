@@ -1,5 +1,5 @@
 # --- Backend ---
-backend/venv/
+backend/.venv/
 backend/.env
 backend/__pycache__/
 backend/*.log
@@ -26,3 +26,6 @@ __pycache__/
 git rm -r --cached .
 git add .
 git commit -m "Clean repo after removing nested git"
+
+
+venv
