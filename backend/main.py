@@ -1,45 +1,37 @@
-
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import os
+import json
 import logging
 from dotenv import load_dotenv
-
 from groq import Groq
+
 from services.pdf_reader import extract_text_from_pdf
 from services.chunker import chunk_text
 
+# Load ENV
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_path)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX")
+
+if not GROQ_API_KEY:
+    raise Exception("GROQ_API_KEY not found in .env")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-pinecone_ok = False
-index = None
+# Where we store extracted PDF chunks
+DATA_FILE = os.path.join(os.path.dirname(__file__), "data/chunks.json")
+os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
 
-try:
-    from pinecone import Pinecone
-    pc = Pinecone(api_key=PINECONE_API_KEY)
-    index = pc.Index(PINECONE_INDEX)
-    pinecone_ok = True
-    logging.info("Pinecone initialized successfully.")
-except Exception as e:
-    logging.warning(f"Pinecone not available: {e}")
-
-# -----------------------------
-# FastAPI App Setup
-# -----------------------------
+# FastAPI
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,6 +40,15 @@ app.add_middleware(
 class AskBody(BaseModel):
     query: str
 
+def save_chunks(chunks):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(chunks, f, indent=2)
+
+def load_chunks():
+    if not os.path.exists(DATA_FILE):
+        return []
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 @app.post("/extract")
 async def extract_endpoint(file: UploadFile = File(...)):
@@ -56,29 +57,8 @@ async def extract_endpoint(file: UploadFile = File(...)):
         text = extract_text_from_pdf(pdf_bytes)
         chunks = chunk_text(text)
 
-        if pinecone_ok:
-            vectors = []
-            for i, chunk in enumerate(chunks):
-
-
-                from openai import OpenAI
-                OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-                client = OpenAI(api_key=OPENAI_API_KEY)
-
-                emb = client.embeddings.create(
-                    model="text-embedding-3-small",
-                    input=chunk
-                ).data[0].embedding
-
-                vectors.append({
-                    "id": f"{file.filename}_{i}",
-                    "values": emb,
-                    "metadata": {"text": chunk}
-                })
-
-            index.upsert(vectors)
-
-        return {"chunks": chunks}
+        save_chunks(chunks)
+        return {"chunks": chunks, "message": "PDF extracted successfully!"}
 
     except Exception as e:
         logging.exception("Error in /extract")
@@ -87,53 +67,42 @@ async def extract_endpoint(file: UploadFile = File(...)):
 @app.post("/ask")
 async def ask_question(body: AskBody):
     try:
-        q = body.query
+        q = body.query.strip()
         print("User Query:", q)
 
-        if not pinecone_ok:
-     
-            completion = groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": "You answer questions about uploaded PDF text."},
-                    {"role": "user", "content": q}
-                ]
-            )
-            return {"answer": completion.choices[0].message.content}
+        chunks = load_chunks()
+        if not chunks:
+            return {"answer": "No PDF extracted yet. Please upload a PDF first."}
 
-        from openai import OpenAI
-        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Simple scoring to find best matching chunks
+        q_words = [w.lower() for w in q.split() if len(w) > 2]
 
-        q_emb = client.embeddings.create(
-            model="text-embedding-3-small",
-            input=q
-        ).data[0].embedding
+        scored = []
+        for chunk in chunks:
+            score = sum(w in chunk.lower() for w in q_words)
+            scored.append((score, chunk))
 
-        result = index.query(
-            vector=q_emb,
-            top_k=5,
-            include_metadata=True
-        )
+        scored.sort(reverse=True, key=lambda x: x[0])
+        best_chunks = [c for s, c in scored[:5]]
 
-        matches = result.matches
-        if not matches:
-            return {"answer": "No relevant content found in PDF."}
-
-        context = " ".join([m.metadata["text"] for m in matches])
+        context = "\n\n".join(best_chunks)
 
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
-                {"role": "system", "content": "You answer using PDF context."},
-                {"role": "user", "content": f"Context: {context}\n\nQuestion: {q}"}
+                {
+                    "role": "system",
+                    "content": "You answer strictly using the context from the uploaded PDF."
+                },
+                {
+                    "role": "user",
+                    "content": f"PDF Context:\n{context}\n\nQuestion: {q}"
+                }
             ]
         )
 
-        answer = completion.choices[0].message.content
-        return {"answer": answer}
+        return {"answer": completion.choices[0].message.content}
 
     except Exception as e:
         logging.exception("Error in /ask")
         return {"error": str(e)}
-
