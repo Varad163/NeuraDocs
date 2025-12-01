@@ -1,7 +1,8 @@
 from fastapi import FastAPI, UploadFile, File
-from backend.services.chunker import chunk_text
-from backend.services.pdf_reader import extract_text_from_pdf
-from backend.services.pinecone_rag import store_chunks, query_chunks
+from services.chunker import chunk_text
+from services.chunker import chunk_text
+from services.pdf_reader import extract_text_from_pdf
+
 from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,16 +26,20 @@ app.add_middleware(
 )
 @app.post("/extract")
 async def extract_endpoint(file: UploadFile = File(...)):
-    contents = await file.read()
-    with open("temp.pdf", "wb") as f:
-        f.write(contents)
+    try:
+        # read pdf bytes
+        pdf_bytes = await file.read()
 
-    text = extract_text_from_pdf("temp.pdf")
-    chunks = chunk_text(text)
+        # extract text
+        text = extract_text_from_pdf(pdf_bytes)
 
-    store_chunks(chunks)
+        # split into chunks (we fix this too)
+        chunks = chunk_text(text)
 
-    return {"chunks": chunks}
+        return {"chunks": chunks}
+    except Exception as e:
+        print("ERROR:", e)
+        return {"error": str(e)}
 
 
 @app.post("/chat")
